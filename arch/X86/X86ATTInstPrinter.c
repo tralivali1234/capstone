@@ -18,10 +18,17 @@
 // this code is only relevant when DIET mode is disable
 #if defined(CAPSTONE_HAS_X86) && !defined(CAPSTONE_DIET) && !defined(CAPSTONE_X86_ATT_DISABLE)
 
+#if !defined(CAPSTONE_HAS_OSXKERNEL)
 #include <ctype.h>
-#include "../../inttypes.h"
+#endif
+#include <platform.h>
+#if defined(CAPSTONE_HAS_OSXKERNEL)
+#include <libkern/libkern.h>
+#else
 #include <stdio.h>
 #include <stdlib.h>
+#endif
+
 #include <string.h>
 
 #include "../../utils.h"
@@ -448,13 +455,28 @@ static void printPCRelImm(MCInst *MI, unsigned OpNo, SStream *O)
 	MCOperand *Op = MCInst_getOperand(MI, OpNo);
 	if (MCOperand_isImm(Op)) {
 		int64_t imm = MCOperand_getImm(Op) + MI->flat_insn->size + MI->address;
+
+		// truncat imm for non-64bit
+		if (MI->csh->mode != CS_MODE_64) {
+			imm = imm & 0xffffffff;
+		}
+
+		if (MI->csh->mode == CS_MODE_16 &&
+				(MI->Opcode != X86_JMP_4 && MI->Opcode != X86_CALLpcrel32))
+			imm = imm & 0xffff;
+
+		// Hack: X86 16bit with opcode X86_JMP_4
+		if (MI->csh->mode == CS_MODE_16 &&
+				(MI->Opcode == X86_JMP_4 && MI->x86_prefix[2] != 0x66))
+			imm = imm & 0xffff;
+
+		// CALL/JMP rel16 is special
+		if (MI->Opcode == X86_CALLpcrel16 || MI->Opcode == X86_JMP_2)
+			imm = imm & 0xffff;
+
 		if (imm < 0) {
 			SStream_concat(O, "0x%"PRIx64, imm);
 		} else {
-			// handle 16bit segment bound
-			if (MI->csh->mode == CS_MODE_16 && imm > 0x100000)
-				imm -= 0x10000;
-
 			if (imm > HEX_THRESHOLD)
 				SStream_concat(O, "0x%"PRIx64, imm);
 			else
@@ -471,7 +493,9 @@ static void printPCRelImm(MCInst *MI, unsigned OpNo, SStream *O)
 
 static void printOperand(MCInst *MI, unsigned OpNo, SStream *O)
 {
+	uint8_t opsize = 0;
 	MCOperand *Op  = MCInst_getOperand(MI, OpNo);
+
 	if (MCOperand_isReg(Op)) {
 		unsigned int reg = MCOperand_getReg(Op);
 		printRegName(O, reg);
@@ -489,6 +513,82 @@ static void printOperand(MCInst *MI, unsigned OpNo, SStream *O)
 		// Print X86 immediates as signed values.
 		int64_t imm = MCOperand_getImm(Op);
 
+		switch(MCInst_getOpcode(MI)) {
+			default:
+				break;
+
+			case X86_AAD8i8:
+			case X86_AAM8i8:
+			case X86_ADC8i8:
+			case X86_ADD8i8:
+			case X86_AND8i8:
+			case X86_CMP8i8:
+			case X86_OR8i8:
+			case X86_SBB8i8:
+			case X86_SUB8i8:
+			case X86_TEST8i8:
+			case X86_XOR8i8:
+			case X86_ROL8ri:
+			case X86_ADC8ri:
+			case X86_ADD8ri:
+			case X86_ADD8ri8:
+			case X86_AND8ri:
+			case X86_AND8ri8:
+			case X86_CMP8ri:
+			case X86_MOV8ri:
+			case X86_MOV8ri_alt:
+			case X86_OR8ri:
+			case X86_OR8ri8:
+			case X86_RCL8ri:
+			case X86_RCR8ri:
+			case X86_ROR8ri:
+			case X86_SAL8ri:
+			case X86_SAR8ri:
+			case X86_SBB8ri:
+			case X86_SHL8ri:
+			case X86_SHR8ri:
+			case X86_SUB8ri:
+			case X86_SUB8ri8:
+			case X86_TEST8ri:
+			case X86_TEST8ri_NOREX:
+			case X86_TEST8ri_alt:
+			case X86_XOR8ri:
+			case X86_XOR8ri8:
+			case X86_OUT8ir:
+
+			case X86_ADC8mi:
+			case X86_ADD8mi:
+			case X86_AND8mi:
+			case X86_CMP8mi:
+			case X86_LOCK_ADD8mi:
+			case X86_LOCK_AND8mi:
+			case X86_LOCK_OR8mi:
+			case X86_LOCK_SUB8mi:
+			case X86_LOCK_XOR8mi:
+			case X86_MOV8mi:
+			case X86_OR8mi:
+			case X86_RCL8mi:
+			case X86_RCR8mi:
+			case X86_ROL8mi:
+			case X86_ROR8mi:
+			case X86_SAL8mi:
+			case X86_SAR8mi:
+			case X86_SBB8mi:
+			case X86_SHL8mi:
+			case X86_SHR8mi:
+			case X86_SUB8mi:
+			case X86_TEST8mi:
+			case X86_TEST8mi_alt:
+			case X86_XOR8mi:
+			case X86_PUSH64i8:
+			case X86_CMP32ri8:
+			case X86_CMP64ri8:
+
+				imm = imm & 0xff;
+				opsize = 1;     // immediate of 1 byte
+				break;
+		}
+
 		switch(MI->flat_insn->id) {
 			default:
 				if (imm >= 0) {
@@ -503,6 +603,39 @@ static void printOperand(MCInst *MI, unsigned OpNo, SStream *O)
 						SStream_concat(O, "$-%"PRIu64, -imm);
 				}
 				break;
+
+			case X86_INS_INT:
+				// do not print number in negative form
+				imm = imm & 0xff;
+				if (imm >= 0 && imm <= HEX_THRESHOLD)
+					SStream_concat(O, "$%u", imm);
+				else {
+					SStream_concat(O, "$0x%x", imm);
+				}
+				break;
+
+			case X86_INS_LCALL:
+			case X86_INS_LJMP:
+				// always print address in positive form
+				if (OpNo == 1) { // selector is ptr16
+					imm = imm & 0xffff;
+					opsize = 2;
+				}
+				SStream_concat(O, "$0x%"PRIx64, imm);
+				break;
+
+			case X86_INS_AND:
+			case X86_INS_OR:
+			case X86_INS_XOR:
+				// do not print number in negative form
+				if (imm >= 0 && imm <= HEX_THRESHOLD)
+					SStream_concat(O, "$%u", imm);
+				else {
+					imm = arch_masks[MI->op1_size? MI->op1_size : MI->imm_size] & imm;
+					SStream_concat(O, "$0x%"PRIx64, imm);
+				}
+				break;
+
 			case X86_INS_RET:
 				// RET imm16
 				if (imm >= 0 && imm <= HEX_THRESHOLD)
@@ -522,6 +655,14 @@ static void printOperand(MCInst *MI, unsigned OpNo, SStream *O)
 				MI->flat_insn->detail->x86.operands[MI->flat_insn->detail->x86.op_count].type = X86_OP_IMM;
 				MI->has_imm = true;
 				MI->flat_insn->detail->x86.operands[MI->flat_insn->detail->x86.op_count].imm = imm;
+
+				if (opsize > 0)
+					MI->flat_insn->detail->x86.operands[MI->flat_insn->detail->x86.op_count].size = opsize;
+				else if (MI->op1_size > 0)
+					MI->flat_insn->detail->x86.operands[MI->flat_insn->detail->x86.op_count].size = MI->op1_size;
+				else
+					MI->flat_insn->detail->x86.operands[MI->flat_insn->detail->x86.op_count].size = MI->imm_size;
+
 				MI->flat_insn->detail->x86.op_count++;
 			}
 		}
@@ -586,6 +727,8 @@ static void printMemReference(MCInst *MI, unsigned Op, SStream *O)
 						SStream_concat(O, "%"PRIu64, DispVal);
 				}
 			}
+		} else {
+			//SStream_concat0(O, "0");
 		}
 	}
 
@@ -656,18 +799,107 @@ void X86_ATT_printInst(MCInst *MI, SStream *OS, void *info)
 	else
 		printInstruction(MI, OS, info);
 
+	// HACK TODO: fix this in machine description
+	switch(MI->flat_insn->id) {
+		default: break;
+		case X86_INS_SYSEXIT:
+				 SStream_Init(OS);
+				 SStream_concat0(OS, "sysexit");
+				 break;
+	}
+
 	if (MI->has_imm) {
 		// if op_count > 1, then this operand's size is taken from the destination op
 		if (MI->flat_insn->detail->x86.op_count > 1) {
-			for (i = 0; i < MI->flat_insn->detail->x86.op_count; i++) {
-				if (MI->flat_insn->detail->x86.operands[i].type == X86_OP_IMM)
-					MI->flat_insn->detail->x86.operands[i].size = MI->flat_insn->detail->x86.operands[MI->flat_insn->detail->x86.op_count - 1].size;
+			if (MI->flat_insn->id != X86_INS_LCALL && MI->flat_insn->id != X86_INS_LJMP) {
+				for (i = 0; i < MI->flat_insn->detail->x86.op_count; i++) {
+					if (MI->flat_insn->detail->x86.operands[i].type == X86_OP_IMM)
+						MI->flat_insn->detail->x86.operands[i].size =
+							MI->flat_insn->detail->x86.operands[MI->flat_insn->detail->x86.op_count - 1].size;
+				}
 			}
 		} else
 			MI->flat_insn->detail->x86.operands[0].size = MI->imm_size;
 	}
 
 	if (MI->csh->detail) {
+        // some instructions need to supply immediate 1 in the first op
+        switch(MCInst_getOpcode(MI)) {
+            default:
+                break;
+            case X86_SHL8r1:
+            case X86_SHL16r1:
+            case X86_SHL32r1:
+            case X86_SHL64r1:
+            case X86_SAL8r1:
+            case X86_SAL16r1:
+            case X86_SAL32r1:
+            case X86_SAL64r1:
+            case X86_SHR8r1:
+            case X86_SHR16r1:
+            case X86_SHR32r1:
+            case X86_SHR64r1:
+            case X86_SAR8r1:
+            case X86_SAR16r1:
+            case X86_SAR32r1:
+            case X86_SAR64r1:
+            case X86_RCL8r1:
+            case X86_RCL16r1:
+            case X86_RCL32r1:
+            case X86_RCL64r1:
+            case X86_RCR8r1:
+            case X86_RCR16r1:
+            case X86_RCR32r1:
+            case X86_RCR64r1:
+            case X86_ROL8r1:
+            case X86_ROL16r1:
+            case X86_ROL32r1:
+            case X86_ROL64r1:
+            case X86_ROR8r1:
+            case X86_ROR16r1:
+            case X86_ROR32r1:
+            case X86_ROR64r1:
+            case X86_SHL8m1:
+            case X86_SHL16m1:
+            case X86_SHL32m1:
+            case X86_SHL64m1:
+            case X86_SAL8m1:
+            case X86_SAL16m1:
+            case X86_SAL32m1:
+            case X86_SAL64m1:
+            case X86_SHR8m1:
+            case X86_SHR16m1:
+            case X86_SHR32m1:
+            case X86_SHR64m1:
+            case X86_SAR8m1:
+            case X86_SAR16m1:
+            case X86_SAR32m1:
+            case X86_SAR64m1:
+            case X86_RCL8m1:
+            case X86_RCL16m1:
+            case X86_RCL32m1:
+            case X86_RCL64m1:
+            case X86_RCR8m1:
+            case X86_RCR16m1:
+            case X86_RCR32m1:
+            case X86_RCR64m1:
+            case X86_ROL8m1:
+            case X86_ROL16m1:
+            case X86_ROL32m1:
+            case X86_ROL64m1:
+            case X86_ROR8m1:
+            case X86_ROR16m1:
+            case X86_ROR32m1:
+            case X86_ROR64m1:
+                // shift all the ops right to leave 1st slot for this new register op
+                memmove(&(MI->flat_insn->detail->x86.operands[1]), &(MI->flat_insn->detail->x86.operands[0]),
+                        sizeof(MI->flat_insn->detail->x86.operands[0]) * (ARR_SIZE(MI->flat_insn->detail->x86.operands) - 1));
+                MI->flat_insn->detail->x86.operands[0].type = X86_OP_IMM;
+                MI->flat_insn->detail->x86.operands[0].imm = 1;
+                MI->flat_insn->detail->x86.operands[0].size = 1;
+                MI->flat_insn->detail->x86.op_count++;
+        }
+
 		// special instruction needs to supply register op
 		// first op can be embedded in the asm by llvm.
 		// so we have to add the missing register as the first operand

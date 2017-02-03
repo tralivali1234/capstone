@@ -16,7 +16,7 @@
 
 #ifdef CAPSTONE_HAS_ARM64
 
-#include "../../inttypes.h"
+#include <platform.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -333,7 +333,8 @@ static bool printSysAlias(MCInst *MI, SStream *O)
 	unsigned CnVal = (unsigned)MCOperand_getImm(Cn);
 	unsigned CmVal = (unsigned)MCOperand_getImm(Cm);
 	unsigned Op2Val = (unsigned)MCOperand_getImm(Op2);
-	unsigned insn_id, op_ic = 0, op_dc = 0, op_at = 0, op_tlbi = 0;
+	unsigned insn_id = ARM64_INS_INVALID;
+	unsigned op_ic = 0, op_dc = 0, op_at = 0, op_tlbi = 0;
 
 	if (CnVal == 7) {
 		switch (CmVal) {
@@ -837,28 +838,28 @@ static void printArithExtend(MCInst *MI, unsigned OpNum, SStream *O)
 		switch(ExtType) {
 			default:	// never reach
 			case AArch64_AM_UXTB:
-				ext = ARM64_EXT_UXTW;
+				ext = ARM64_EXT_UXTB;
 				break;
 			case AArch64_AM_UXTH:
-				ext = ARM64_EXT_UXTW;
+				ext = ARM64_EXT_UXTH;
 				break;
 			case AArch64_AM_UXTW:
 				ext = ARM64_EXT_UXTW;
 				break;
 			case AArch64_AM_UXTX:
-				ext = ARM64_EXT_UXTW;
+				ext = ARM64_EXT_UXTX;
 				break;
 			case AArch64_AM_SXTB:
-				ext = ARM64_EXT_UXTW;
+				ext = ARM64_EXT_SXTB;
 				break;
 			case AArch64_AM_SXTH:
-				ext = ARM64_EXT_UXTW;
+				ext = ARM64_EXT_SXTH;
 				break;
 			case AArch64_AM_SXTW:
-				ext = ARM64_EXT_UXTW;
+				ext = ARM64_EXT_SXTW;
 				break;
 			case AArch64_AM_SXTX:
-				ext = ARM64_EXT_UXTW;
+				ext = ARM64_EXT_SXTX;
 				break;
 		}
 
@@ -1036,7 +1037,12 @@ static void printFPImmOperand(MCInst *MI, unsigned OpNum, SStream *O)
 	double FPImm = MCOperand_isFPImm(MO) ? MCOperand_getFPImm(MO) : AArch64_AM_getFPImmFloat((int)MCOperand_getImm(MO));
 
 	// 8 decimal places are enough to perfectly represent permitted floats.
+#if defined(_KERNEL_MODE)
+	// Issue #681: Windows kernel does not support formatting float point
+	SStream_concat(O, "#<float_point_unsupported>");
+#else
 	SStream_concat(O, "#%.8f", FPImm);
+#endif
 	if (MI->csh->detail) {
 		MI->flat_insn->detail->arm64.operands[MI->flat_insn->detail->arm64.op_count].type = ARM64_OP_FP;
 		MI->flat_insn->detail->arm64.operands[MI->flat_insn->detail->arm64.op_count].fp = FPImm;
@@ -1364,7 +1370,7 @@ static void printSystemPStateField(MCInst *MI, unsigned OpNo, SStream *O)
 
 static void printSIMDType10Operand(MCInst *MI, unsigned OpNo, SStream *O)
 {
-	unsigned RawVal = (unsigned)MCOperand_getImm(MCInst_getOperand(MI, OpNo));
+	uint8_t RawVal = (uint8_t)MCOperand_getImm(MCInst_getOperand(MI, OpNo));
 	uint64_t Val = AArch64_AM_decodeAdvSIMDModImmType10(RawVal);
 	SStream_concat(O, "#%#016llx", Val);
 	if (MI->csh->detail) {

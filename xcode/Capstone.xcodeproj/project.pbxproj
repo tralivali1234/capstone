@@ -430,7 +430,6 @@
 		DCFE24A119DDCDEE00EF8EA9 /* SStream.c */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.c; name = SStream.c; path = ../SStream.c; sourceTree = "<group>"; };
 		DCFE24A219DDCDEE00EF8EA9 /* utils.c */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.c; name = utils.c; path = ../utils.c; sourceTree = "<group>"; };
 		DCFE24B019DDCE1E00EF8EA9 /* cs_priv.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = cs_priv.h; path = ../cs_priv.h; sourceTree = "<group>"; };
-		DCFE24B119DDCE1E00EF8EA9 /* inttypes.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = inttypes.h; path = ../inttypes.h; sourceTree = "<group>"; };
 		DCFE24B219DDCE1E00EF8EA9 /* LEB128.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = LEB128.h; path = ../LEB128.h; sourceTree = "<group>"; };
 		DCFE24B319DDCE1E00EF8EA9 /* MathExtras.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = MathExtras.h; path = ../MathExtras.h; sourceTree = "<group>"; };
 		DCFE24B419DDCE1E00EF8EA9 /* MCDisassembler.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = MCDisassembler.h; path = ../MCDisassembler.h; sourceTree = "<group>"; };
@@ -607,7 +606,6 @@
 			children = (
 				DCFE249D19DDCDEE00EF8EA9 /* cs.c */,
 				DCFE24B019DDCE1E00EF8EA9 /* cs_priv.h */,
-				DCFE24B119DDCE1E00EF8EA9 /* inttypes.h */,
 				DCFE24B219DDCE1E00EF8EA9 /* LEB128.h */,
 				DCFE24B319DDCE1E00EF8EA9 /* MathExtras.h */,
 				DCFE24B419DDCE1E00EF8EA9 /* MCDisassembler.h */,

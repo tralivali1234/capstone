@@ -15,7 +15,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
-#include "../../inttypes.h"
+#include <platform.h>
 
 #include "ARMAddressingModes.h"
 #include "ARMBaseInfo.h"
@@ -44,6 +44,10 @@
 
 static bool ITStatus_push_back(ARM_ITStatus *it, char v)
 {
+	if (it->size >= sizeof(it->ITStates)) {
+		// TODO: consider warning user.
+		it->size = 0;
+	}
 	it->ITStates[it->size] = v;
 	it->size++;
 
@@ -730,8 +734,7 @@ static DecodeStatus _Thumb_getInstruction(cs_struct *ud, MCInst *MI, const uint8
 		// Nested IT blocks are UNPREDICTABLE.  Must be checked before we add
 		// the Thumb predicate.
 		if (MCInst_getOpcode(MI) == ARM_t2IT && ITStatus_instrInITBlock(&(ud->ITBlock)))
-			result = MCDisassembler_SoftFail;
-
+			return MCDisassembler_SoftFail;
 		Check(&result, AddThumbPredicate(ud, MI));
 
 		// If we find an IT instruction, we need to parse its condition
@@ -755,10 +758,10 @@ static DecodeStatus _Thumb_getInstruction(cs_struct *ud, MCInst *MI, const uint8
 	memcpy(bytes, code, 4);
 
 	if (ud->big_endian)
-		insn32 = (bytes[3] <<  24) |
-			(bytes[2] <<  16) |
-			(bytes[1] << 8) |
-			(bytes[0] << 0);
+		insn32 = (bytes[3] <<  0) |
+			(bytes[2] <<  8) |
+			(bytes[1] << 16) |
+			(bytes[0] << 24);
 	else
 		insn32 = (bytes[3] <<  8) |
 			(bytes[2] <<  0) |

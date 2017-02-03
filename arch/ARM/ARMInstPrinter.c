@@ -19,7 +19,7 @@
 #include <stdio.h>	// DEBUG
 #include <stdlib.h>
 #include <string.h>
-#include "../../inttypes.h"
+#include <platform.h>
 
 #include "ARMInstPrinter.h"
 #include "ARMAddressingModes.h"
@@ -252,6 +252,7 @@ void ARM_post_printer(csh ud, cs_insn *insn, char *insn_asm, MCInst *mci)
 		insn->detail->arm.writeback = true;
 	} else if (mci->csh->mode & CS_MODE_THUMB) {
 		// handle some special instructions with writeback
+        //printf(">> Opcode = %u\n", mci->Opcode);
 		switch(mci->Opcode) {
 			default:
 				break;
@@ -303,6 +304,7 @@ void ARM_post_printer(csh ud, cs_insn *insn, char *insn_asm, MCInst *mci)
 		}
 	} else {	// ARM mode
 		// handle some special instructions with writeback
+        //printf(">> Opcode = %u\n", mci->Opcode);
 		switch(mci->Opcode) {
 			default:
 				break;
@@ -346,6 +348,7 @@ void ARM_post_printer(csh ud, cs_insn *insn, char *insn_asm, MCInst *mci)
 
 			case ARM_LDRB_POST_IMM:
 			case ARM_LDR_POST_IMM:
+			case ARM_LDR_POST_REG:
 			case ARM_STRB_POST_IMM:
 			case ARM_STR_POST_IMM:
 
@@ -718,27 +721,27 @@ static void printOperand(MCInst *MI, unsigned OpNo, SStream *O)
 		// add 8 in ARM mode, or 4 in Thumb mode
 		// printf(">> opcode: %u\n", MCInst_getOpcode(MI));
 		if (ARM_rel_branch(MI->csh, opc)) {
+			uint32_t address;
+
 			// only do this for relative branch
 			if (MI->csh->mode & CS_MODE_THUMB) {
-				imm += (int32_t)MI->address + 4;
+				address = (uint32_t)MI->address + 4;
 				if (ARM_blx_to_arm_mode(MI->csh, opc)) {
 					// here need to align down to the nearest 4-byte address
 #define _ALIGN_DOWN(v, align_width) ((v/align_width)*align_width)
-					imm = _ALIGN_DOWN(imm, 4);
+					address = _ALIGN_DOWN(address, 4);
 #undef _ALIGN_DOWN
 				}
 			} else {
-				imm += (int32_t)MI->address + 8;
+				address = (uint32_t)MI->address + 8;
 			}
 
-			if (imm >= 0) {
-				if (imm > HEX_THRESHOLD)
-					SStream_concat(O, "#0x%x", imm);
-				else
-					SStream_concat(O, "#%u", imm);
-			} else {
+			imm += address;
+
+			if (imm > HEX_THRESHOLD)
 				SStream_concat(O, "#0x%x", imm);
-			}
+			else
+				SStream_concat(O, "#%u", imm);
 		} else {
 			switch(MI->flat_insn->id) {
 				default:
@@ -1019,7 +1022,7 @@ static void printAM3PreOrOffsetIndexOp(MCInst *MI, unsigned Op, SStream *O,
 	MCOperand *MO1 = MCInst_getOperand(MI, Op);
 	MCOperand *MO2 = MCInst_getOperand(MI, Op+1);
 	MCOperand *MO3 = MCInst_getOperand(MI, Op+2);
-	ARM_AM_AddrOpc subtracted = getAM3Op((unsigned int)MCOperand_getImm(MO3));
+	ARM_AM_AddrOpc sign = getAM3Op((unsigned int)MCOperand_getImm(MO3));
 	unsigned ImmOffs;
 
 	SStream_concat0(O, "[");
@@ -1030,11 +1033,11 @@ static void printAM3PreOrOffsetIndexOp(MCInst *MI, unsigned Op, SStream *O,
 
 	if (MCOperand_getReg(MO2)) {
 		SStream_concat0(O, ", ");
-		SStream_concat0(O, ARM_AM_getAddrOpcStr(subtracted));
+		SStream_concat0(O, ARM_AM_getAddrOpcStr(sign));
 		printRegName(MI->csh, O, MCOperand_getReg(MO2));
 		if (MI->csh->detail) {
 			MI->flat_insn->detail->arm.operands[MI->flat_insn->detail->arm.op_count].mem.index = MCOperand_getReg(MO2);
-			if (subtracted) {
+			if (!sign) {
 				MI->flat_insn->detail->arm.operands[MI->flat_insn->detail->arm.op_count].mem.scale = -1;
 				MI->flat_insn->detail->arm.operands[MI->flat_insn->detail->arm.op_count].subtracted = true;
 			}
@@ -1047,19 +1050,19 @@ static void printAM3PreOrOffsetIndexOp(MCInst *MI, unsigned Op, SStream *O,
 	//If the op is sub we have to print the immediate even if it is 0
 	ImmOffs = getAM3Offset((unsigned int)MCOperand_getImm(MO3));
 
-	if (AlwaysPrintImm0 || ImmOffs || (subtracted == ARM_AM_sub)) {
+	if (AlwaysPrintImm0 || ImmOffs || (sign == ARM_AM_sub)) {
 		if (ImmOffs > HEX_THRESHOLD)
-			SStream_concat(O, ", #%s0x%x", ARM_AM_getAddrOpcStr(subtracted), ImmOffs);
+			SStream_concat(O, ", #%s0x%x", ARM_AM_getAddrOpcStr(sign), ImmOffs);
 		else
-			SStream_concat(O, ", #%s%u", ARM_AM_getAddrOpcStr(subtracted), ImmOffs);
+			SStream_concat(O, ", #%s%u", ARM_AM_getAddrOpcStr(sign), ImmOffs);
 	}
 
 	if (MI->csh->detail) {
-		if (subtracted) {
-			MI->flat_insn->detail->arm.operands[MI->flat_insn->detail->arm.op_count].mem.disp = (int)ImmOffs;
+		if (!sign) {
+			MI->flat_insn->detail->arm.operands[MI->flat_insn->detail->arm.op_count].mem.disp = -(int)ImmOffs;
 			MI->flat_insn->detail->arm.operands[MI->flat_insn->detail->arm.op_count].subtracted = true;
 		} else
-			MI->flat_insn->detail->arm.operands[MI->flat_insn->detail->arm.op_count].mem.disp = (int)-ImmOffs;
+			MI->flat_insn->detail->arm.operands[MI->flat_insn->detail->arm.op_count].mem.disp = (int)ImmOffs;
 	}
 
 	SStream_concat0(O, "]");
@@ -1287,7 +1290,7 @@ static void printMemBOption(MCInst *MI, unsigned OpNum, SStream *O)
 {
 	unsigned val = (unsigned int)MCOperand_getImm(MCInst_getOperand(MI, OpNum));
 	SStream_concat0(O, ARM_MB_MemBOptToString(val + 1,
-				(ARM_getFeatureBits(MI->csh->mode) & ARM_HasV8Ops)));
+				(ARM_getFeatureBits(MI->csh->mode) & ARM_HasV8Ops) != 0));
 
 	if (MI->csh->detail) {
 		MI->flat_insn->detail->arm.mem_barrier = (arm_mem_barrier)(val + 1);
@@ -2103,7 +2106,13 @@ static void printT2AddrModeSoRegOperand(MCInst *MI,
 static void printFPImmOperand(MCInst *MI, unsigned OpNum, SStream *O)
 {
 	MCOperand *MO = MCInst_getOperand(MI, OpNum);
+
+#if defined(_KERNEL_MODE)
+	// Issue #681: Windows kernel does not support formatting float point
+	SStream_concat(O, "#<float_point_unsupported>");
+#else
 	SStream_concat(O, "#%e", getFPImmFloat((unsigned int)MCOperand_getImm(MO)));
+#endif
 	if (MI->csh->detail) {
 		MI->flat_insn->detail->arm.operands[MI->flat_insn->detail->arm.op_count].type = ARM_OP_FP;
 		MI->flat_insn->detail->arm.operands[MI->flat_insn->detail->arm.op_count].fp = getFPImmFloat((unsigned int)MCOperand_getImm(MO));

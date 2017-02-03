@@ -43,6 +43,16 @@ ifeq ($(CAPSTONE_USE_SYS_DYN_MEM),yes)
 CFLAGS += -DCAPSTONE_USE_SYS_DYN_MEM
 endif
 
+ifeq ($(CAPSTONE_HAS_OSXKERNEL), yes)
+CFLAGS += -DCAPSTONE_HAS_OSXKERNEL
+SDKROOT ?= $(shell xcodebuild -version -sdk macosx Path)
+CFLAGS += -mmacosx-version-min=10.5 \
+		  -isysroot$(SDKROOT) \
+		  -I$(SDKROOT)/System/Library/Frameworks/Kernel.framework/Headers \
+		  -mkernel \
+		  -fno-builtin
+endif
+
 CFLAGS += $(foreach arch,$(LIBARCHS),-arch $(arch))
 LDFLAGS += $(foreach arch,$(LIBARCHS),-arch $(arch))
 
@@ -64,13 +74,20 @@ LIBDIRARCH ?= lib
 # Or better, pass 'LIBDIRARCH=lib64' to 'make install/uninstall' via 'make.sh'.
 #LIBDIRARCH ?= lib64
 LIBDIR = $(DESTDIR)$(PREFIX)/$(LIBDIRARCH)
+BINDIR = $(DESTDIR)$(PREFIX)/bin
 
 LIBDATADIR = $(LIBDIR)
+
+# Don't redefine $LIBDATADIR when global environment variable
+# USE_GENERIC_LIBDATADIR is set. This is used by the pkgsrc framework.
+
+ifndef USE_GENERIC_LIBDATADIR
 ifeq ($(UNAME_S), FreeBSD)
 LIBDATADIR = $(DESTDIR)$(PREFIX)/libdata
 endif
 ifeq ($(UNAME_S), DragonFly)
 LIBDATADIR = $(DESTDIR)$(PREFIX)/libdata
+endif
 endif
 
 INSTALL_BIN ?= install
@@ -240,7 +257,7 @@ PKGCFGDIR ?= $(LIBDATADIR)/pkgconfig
 API_MAJOR=$(shell echo `grep -e CS_API_MAJOR include/capstone.h | grep -v = | awk '{print $$3}'` | awk '{print $$1}')
 VERSION_EXT =
 
-IS_APPLE := $(shell $(CC) -dM -E - < /dev/null | grep __apple_build_version__ | wc -l | tr -d " ")
+IS_APPLE := $(shell $(CC) -dM -E - < /dev/null | grep -cm 1 -e __apple_build_version__ -e __APPLE_CC__)
 ifeq ($(IS_APPLE),1)
 EXT = dylib
 VERSION_EXT = $(API_MAJOR).$(EXT)
@@ -290,6 +307,7 @@ else ifeq ($(IS_CYGWIN),1)
 LIBRARY = $(BLDIR)/$(LIBNAME).$(EXT)
 else	# *nix
 LIBRARY = $(BLDIR)/lib$(LIBNAME).$(EXT)
+CFLAGS += -fvisibility=hidden
 endif
 endif
 
@@ -309,14 +327,13 @@ PKGCFGF = $(BLDIR)/$(LIBNAME).pc
 
 all: $(LIBRARY) $(ARCHIVE) $(PKGCFGF)
 ifeq (,$(findstring yes,$(CAPSTONE_BUILD_CORE_ONLY)))
+	@V=$(V) $(MAKE) -C cstool
 ifndef BUILDDIR
 	cd tests && $(MAKE)
 else
 	cd tests && $(MAKE) BUILDDIR=$(BLDIR)
 endif
-ifeq ($(CAPSTONE_SHARED),yes)
-	$(INSTALL_DATA) $(LIBRARY) $(BLDIR)/tests/
-endif
+	$(call install-library,$(BLDIR)/tests/)
 endif
 
 ifeq ($(CAPSTONE_SHARED),yes)
@@ -329,7 +346,7 @@ else
 endif
 endif
 
-$(LIBOBJ): config.mk
+$(LIBOBJ): *.h include/*.h config.mk
 
 $(LIBOBJ_ARM): $(DEP_ARM)
 $(LIBOBJ_ARM64): $(DEP_ARM64)
@@ -361,14 +378,7 @@ endif
 
 install: $(PKGCFGF) $(ARCHIVE) $(LIBRARY)
 	mkdir -p $(LIBDIR)
-ifeq ($(CAPSTONE_SHARED),yes)
-	$(INSTALL_LIB) $(LIBRARY) $(LIBDIR)
-ifneq ($(VERSION_EXT),)
-	cd $(LIBDIR) && \
-	mv lib$(LIBNAME).$(EXT) lib$(LIBNAME).$(VERSION_EXT) && \
-	ln -s lib$(LIBNAME).$(VERSION_EXT) lib$(LIBNAME).$(EXT)
-endif
-endif
+	$(call install-library,$(LIBDIR))
 ifeq ($(CAPSTONE_STATIC),yes)
 	$(INSTALL_DATA) $(ARCHIVE) $(LIBDIR)
 endif
@@ -376,16 +386,20 @@ endif
 	$(INSTALL_DATA) include/*.h $(INCDIR)/$(LIBNAME)
 	mkdir -p $(PKGCFGDIR)
 	$(INSTALL_DATA) $(PKGCFGF) $(PKGCFGDIR)/
+	mkdir -p $(BINDIR)
+	$(INSTALL_LIB) cstool/cstool $(BINDIR)
 
 uninstall:
 	rm -rf $(INCDIR)/$(LIBNAME)
 	rm -f $(LIBDIR)/lib$(LIBNAME).*
 	rm -f $(PKGCFGDIR)/$(LIBNAME).pc
+	rm -f $(BINDIR)/cstool
 
 clean:
 	rm -f $(LIBOBJ)
 	rm -f $(BLDIR)/lib$(LIBNAME).* $(BLDIR)/$(LIBNAME).*
 	rm -f $(PKGCFGF)
+	$(MAKE) -C cstool clean
 
 ifeq (,$(findstring yes,$(CAPSTONE_BUILD_CORE_ONLY)))
 	cd tests && $(MAKE) clean
@@ -424,7 +438,7 @@ TESTS += test_skipdata test_skipdata.static test_iter.static
 check:
 	@for t in $(TESTS); do \
 		echo Check $$t ... ; \
-		./tests/$$t > /dev/null && echo OK || echo FAILED; \
+		LD_LIBRARY_PATH=./tests ./tests/$$t > /dev/null && echo OK || echo FAILED; \
 	done
 
 $(OBJDIR)/%.o: %.c
@@ -434,6 +448,20 @@ ifeq ($(V),0)
 	@$(compile)
 else
 	$(compile)
+endif
+
+
+ifeq ($(CAPSTONE_SHARED),yes)
+define install-library
+	$(INSTALL_LIB) $(LIBRARY) $1
+	$(if $(VERSION_EXT),
+		cd $1 && \
+		mv lib$(LIBNAME).$(EXT) lib$(LIBNAME).$(VERSION_EXT) && \
+		ln -s lib$(LIBNAME).$(VERSION_EXT) lib$(LIBNAME).$(EXT))
+endef
+else
+define install-library
+endef
 endif
 
 
@@ -458,4 +486,3 @@ define generate-pkgcfg
 	echo 'Libs: -L$${libdir} -lcapstone' >> $(PKGCFGF)
 	echo 'Cflags: -I$${includedir}' >> $(PKGCFGF)
 endef
-

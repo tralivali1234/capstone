@@ -20,6 +20,10 @@
 #define _CRT_SECURE_NO_WARNINGS
 #endif
 
+#if defined (WIN32) || defined (WIN64) || defined (_WIN32) || defined (_WIN64)
+#pragma warning(disable:28719)		// disable MSVC's warning on strncpy()
+#endif
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -81,7 +85,7 @@ void Sparc_post_printer(csh ud, cs_insn *insn, char *insn_asm, MCInst *mci)
 	if (insn->id == SPARC_INS_CASX) {
 		// first op is actually a memop, not regop
 		insn->detail->sparc.operands[0].type = SPARC_OP_MEM;
-		insn->detail->sparc.operands[0].mem.base = insn->detail->sparc.operands[0].reg;
+		insn->detail->sparc.operands[0].mem.base = (uint8_t)insn->detail->sparc.operands[0].reg;
 		insn->detail->sparc.operands[0].mem.disp = 0;
 	}
 }
@@ -172,9 +176,9 @@ static void printOperand(MCInst *MI, int opNum, SStream *O)
 		if (MI->csh->detail) {
 			if (MI->csh->doing_mem) {
 				if (MI->flat_insn->detail->sparc.operands[MI->flat_insn->detail->sparc.op_count].mem.base)
-					MI->flat_insn->detail->sparc.operands[MI->flat_insn->detail->sparc.op_count].mem.index = reg;
+					MI->flat_insn->detail->sparc.operands[MI->flat_insn->detail->sparc.op_count].mem.index = (uint8_t)reg;
 				else
-					MI->flat_insn->detail->sparc.operands[MI->flat_insn->detail->sparc.op_count].mem.base = reg;
+					MI->flat_insn->detail->sparc.operands[MI->flat_insn->detail->sparc.op_count].mem.base = (uint8_t)reg;
 			} else {
 				MI->flat_insn->detail->sparc.operands[MI->flat_insn->detail->sparc.op_count].type = SPARC_OP_REG;
 				MI->flat_insn->detail->sparc.operands[MI->flat_insn->detail->sparc.op_count].reg = reg;
@@ -188,12 +192,75 @@ static void printOperand(MCInst *MI, int opNum, SStream *O)
 	if (MCOperand_isImm(MO)) {
 		Imm = (int)MCOperand_getImm(MO);
 
-		// get absolute address for CALL/Bxx
-		if (MI->Opcode == SP_CALL)
-			Imm += (uint32_t)MI->address;
-		else if (MI->flat_insn->id == SPARC_INS_B)
-			// pc + (disp30 * 4)
-			Imm = (uint32_t)MI->address + Imm * 4;
+		// Conditional branches displacements needs to be signextended to be
+		// able to jump backwards.
+		//
+		// Displacements are measured as the number of instructions forward or
+		// backward, so they need to be multiplied by 4
+		switch (MI->Opcode) {
+			case SP_CALL:
+				Imm = SignExtend32(Imm, 30);
+				Imm += (uint32_t)MI->address;
+				break;
+
+			// Branch on integer condition with prediction (BPcc)
+			// Branch on floating point condition with prediction (FBPfcc)
+			case SP_BPICC:
+			case SP_BPICCA:
+			case SP_BPICCANT:
+			case SP_BPICCNT:
+			case SP_BPXCC:
+			case SP_BPXCCA:
+			case SP_BPXCCANT:
+			case SP_BPXCCNT:
+			case SP_BPFCC:
+			case SP_BPFCCA:
+			case SP_BPFCCANT:
+			case SP_BPFCCNT:
+				Imm = SignExtend32(Imm, 19);
+				Imm = (uint32_t)MI->address + Imm * 4;
+				break;
+
+			// Branch on integer condition (Bicc)
+			// Branch on floating point condition (FBfcc)
+			case SP_BA:
+			case SP_BCOND:
+			case SP_BCONDA:
+			case SP_FBCOND:
+			case SP_FBCONDA:
+				Imm = SignExtend32(Imm, 22);
+				Imm = (uint32_t)MI->address + Imm * 4;
+				break;
+
+			// Branch on integer register with prediction (BPr)
+			case SP_BPGEZapn:
+			case SP_BPGEZapt:
+			case SP_BPGEZnapn:
+			case SP_BPGEZnapt:
+			case SP_BPGZapn:
+			case SP_BPGZapt:
+			case SP_BPGZnapn:
+			case SP_BPGZnapt:
+			case SP_BPLEZapn:
+			case SP_BPLEZapt:
+			case SP_BPLEZnapn:
+			case SP_BPLEZnapt:
+			case SP_BPLZapn:
+			case SP_BPLZapt:
+			case SP_BPLZnapn:
+			case SP_BPLZnapt:
+			case SP_BPNZapn:
+			case SP_BPNZapt:
+			case SP_BPNZnapn:
+			case SP_BPNZnapt:
+			case SP_BPZapn:
+			case SP_BPZapt:
+			case SP_BPZnapn:
+			case SP_BPZnapt:
+				Imm = SignExtend32(Imm, 16);
+				Imm = (uint32_t)MI->address + Imm * 4;
+				break;
+		}
 
 		if (Imm >= 0) {
 			if (Imm > HEX_THRESHOLD)

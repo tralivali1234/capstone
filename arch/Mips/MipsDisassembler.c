@@ -19,7 +19,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "../../inttypes.h"
+#include <platform.h>
 
 #include "../../utils.h"
 
@@ -409,8 +409,17 @@ static DecodeStatus Mips64Disassembler_getInstruction(int mode, MCInst *instr,
 		uint64_t Address, bool isBigEndian, MCRegisterInfo *MRI)
 {
 	uint32_t Insn;
+	DecodeStatus Result;
 
-	DecodeStatus Result = readInstruction32((unsigned char*)code, &Insn, isBigEndian, false);
+	if (code_len < 4)
+		// not enough data
+		return MCDisassembler_Fail;
+
+	if (instr->flat_insn->detail) {
+		memset(instr->flat_insn->detail, 0, sizeof(cs_detail));
+	}
+
+	Result = readInstruction32((unsigned char*)code, &Insn, isBigEndian, false);
 	if (Result == MCDisassembler_Fail)
 		return MCDisassembler_Fail;
 
@@ -481,6 +490,8 @@ static DecodeStatus DecodeINSVE_DF_4(MCInst *MI, uint32_t insn,
 	} //else llvm_unreachable("Invalid encoding");
 
 	//assert(NSize != 0 && RegDecoder != nullptr);
+	if (NSize == 0 || RegDecoder == NULL)
+		return MCDisassembler_Fail;
 
 	if (RegDecoder == NULL)
 		return MCDisassembler_Fail;
